@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>F1 Race History</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+
+<body>
+
+    <header>
+        <div class="header-inner">
+            <div class="logo">
+                <span>F1 <strong>Race History</strong></span>
+            </div>
+
+            <div class="controls">
+                <label class="ctrl-label" for="year-select">SEASON</label>
+                <select id="year-select">
+                    <option value="2026" selected>2026</option>
+                    <option value="2025">2025</option>
+                    <option value="2024">2024</option>
+                    <option value="2023">2023</option>
+                </select>
+                <button id="load-btn" onclick="loadRaces()">Load</button>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div id="status" class="status hidden"></div>
+
+        <div id="summary" class="summary hidden">
+            <div class="summary-item">
+                <span class="summary-num" id="sum-races">—</span>
+                <span class="summary-label">Races</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-num" id="sum-countries">—</span>
+                <span class="summary-label">Countries</span>
+            </div>
+            <div class="summary-item">
+                <span class="summary-num" id="sum-circuits">—</span>
+                <span class="summary-label">Circuits</span>
+            </div>
+        </div>
+
+        <div id="race-grid"></div>
+    </main>
+
+    <div id="drawer-overlay" class="drawer-overlay hidden" onclick="closeDrawer()"></div>
+    <aside id="drawer" class="drawer hidden">
+        <div class="drawer-header">
+            <div>
+                <div class="drawer-round" id="drawer-round"></div>
+                <div class="drawer-title" id="drawer-title"></div>
+                <div class="drawer-sub" id="drawer-sub"></div>
+            </div>
+            <button class="drawer-close" onclick="closeDrawer()">✕</button>
+        </div>
+        <div id="drawer-sessions">
+            <div class="drawer-loading">Loading sessions…</div>
+        </div>
+    </aside>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Session Detail</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/session.css" />
+</head>
+<body>
+
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit">
+          </svg>
+          <span>F1 <strong>Pit Wall</strong></span>
+        </a>
+      </div>
+      <div id="session-meta" style="font-size:14px;color:var(--text2)">Loading…</div>
+    </div>
+  </header>
+
+  <main>
+    <div id="status" class="status hidden"></div>
+    <div id="standings-wrap"></div>
+  </main>
+
+
+  <script>
+    const SESSION_KEY = {{ session_key }};
+  </script>
+  <script src="/static/session.js"></script>
+
+</body>
+</html>
