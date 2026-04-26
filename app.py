@@ -120,6 +120,13 @@ def sessions():
     return jsonify(data)
 
 
+@app.route("/api/session_info")
+def session_info():
+    session_key = request.args.get("session_key", type=int)
+    data = openf1_get_cached("/sessions", {"session_key": session_key}, ttl=180)
+    return jsonify(data[0] if data else {})
+
+
 @app.route("/session/<int:session_key>")
 def session_page(session_key):
     return render_template("session.html", session_key=session_key)

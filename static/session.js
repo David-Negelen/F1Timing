@@ -10,27 +10,41 @@ const TEAM_COLORS = {
     "Haas": "#B6BABD",
     "Kick Sauber": "#52E252",
     "Alfa Romeo": "#9B0000",
-    "RB": "#3671C6",
+    "RB": "#4B7BFF",
     "Audi": "#BB0A30",
     "Cadillac": "#003A8F",
 };
 
-let selectedDriverNumber = null;
-let lapUiState = null;
-let replayState = null;
+const ROW_HEIGHT = 44;
 
-function teamColor(teamName) {
-    if (!teamName) return "#555";
-    const key = Object.keys(TEAM_COLORS).find(k =>
-        teamName.toLowerCase().includes(k.toLowerCase())
-    );
-    return key ? TEAM_COLORS[key] : "#555";
-}
+const appState = {
+    mode: "race",
+    sessionInfo: null,
+    drivers: [],
+    driverMap: {},
+    indexes: {},
+    replay: {
+        startMs: 0,
+        endMs: 0,
+        durationSec: 0,
+        currentSec: 0,
+        playing: false,
+        speed: 1,
+        rafId: null,
+        lastTick: 0,
+    },
+    ui: {
+        rowsByDriver: new Map(),
+        prevPositions: new Map(),
+    },
+};
 
 async function apiFetch(path, params = {}) {
     const url = new URL(path, window.location.origin);
     Object.entries(params).forEach(([k, v]) => {
-        if (v !== null && v !== undefined) url.searchParams.set(k, v);
+        if (v !== null && v !== undefined) {
+            url.searchParams.set(k, v);
+        }
     });
 
     const res = await fetch(url);
@@ -49,412 +63,18 @@ async function apiFetch(path, params = {}) {
         const hint = res.status === 429
             ? ` Rate limit reached${retryAfter ? `, retry in ${retryAfter}s.` : "."}`
             : "";
-
         throw new Error(`${baseMessage}${hint}`);
     }
 
     return res.json();
 }
 
-async function loadStandings() {
-    showStatus("Fetching session data…");
-    const wrap = document.getElementById("standings-wrap");
-    const replayPanel = document.getElementById("replay-panel");
-    wrap.innerHTML = "";
-    replayPanel.innerHTML = "";
-    replayPanel.classList.add("hidden");
-
-    try {
-        const [driversResult, positionsResult, lapsResult, intervalsResult] = await Promise.allSettled([
-            apiFetch("/api/drivers", { session_key: SESSION_KEY }),
-            apiFetch("/api/positions", { session_key: SESSION_KEY }),
-            apiFetch("/api/laps", { session_key: SESSION_KEY }),
-            apiFetch("/api/intervals", { session_key: SESSION_KEY }),
-        ]);
-
-        if (driversResult.status === "rejected" || positionsResult.status === "rejected") {
-            const err = driversResult.status === "rejected"
-                ? driversResult.reason
-                : positionsResult.reason;
-            throw err;
-        }
-
-        const drivers = driversResult.value;
-        const positions = positionsResult.value;
-        const laps = lapsResult.status === "fulfilled" ? lapsResult.value : [];
-        const intervals = intervalsResult.status === "fulfilled" ? intervalsResult.value : [];
-
-        hideStatus();
-
-        const driverMap = {};
-        drivers.forEach(d => { driverMap[d.driver_number] = d; });
-
-        const finalPositions = getLastPositionPerDriver(positions);
-
-        finalPositions.sort((a, b) => a.position - b.position);
-
-        if (drivers[0]) {
-            document.getElementById("session-meta").textContent =
-                `Session ${SESSION_KEY} · ${drivers.length} drivers`;
-        }
-
-        renderStandings(finalPositions, driverMap);
-        initReplayPanel(drivers, positions, laps, intervals);
-        if (lapsResult.status === "fulfilled") {
-            renderLapTimes(laps, driverMap);
-        } else {
-            renderInlineNotice("Lap data is temporarily unavailable due to API limits.");
-        }
-
-    } catch (err) {
-        showStatus(`Error: ${err.message}`, "error");
-    }
-}
-
-
-function getLastPositionPerDriver(positions) {
-    const last = {};
-    positions.forEach(p => {
-        last[p.driver_number] = p;
-    });
-    return Object.values(last);
-}
-
-
-function renderStandings(finalPositions, driverMap) {
-    const wrap = document.getElementById("standings-wrap");
-
-    const table = document.createElement("table");
-    table.className = "standings-table";
-    table.innerHTML = `
-        <thead>
-        <tr>
-            <th>POS</th>
-            <th>DRIVER</th>
-            <th>#</th>
-            <th>TEAM</th>
-        </tr>
-        </thead>
-    `;
-
-    const tbody = document.createElement("tbody");
-
-    finalPositions.forEach(entry => {
-        const driver = driverMap[entry.driver_number] || {};
-        const pos = entry.position;
-        const color = teamColor(driver.team_name);
-
-        const posClass = pos === 1 ? "pos pos-1" : pos === 2 ? "pos pos-2" : pos === 3 ? "pos pos-3" : "pos";
-
-        const row = document.createElement("tr");
-        row.className = "driver-row";
-        row.dataset.driverNumber = String(entry.driver_number);
-        row.innerHTML = `
-            <td class="${posClass}">${pos}</td>
-            <td>
-                <div class="driver-cell">
-                <div class="team-stripe" style="background:${color}"></div>
-                <div>
-                    <div class="driver-code">${driver.name_acronym || "—"}</div>
-                    <div class="driver-full">${driver.full_name || ""}</div>
-                </div>
-                </div>
-            </td>
-            <td class="mono-cell">${entry.driver_number}</td>
-            <td class="team-name-cell">${driver.team_name || "—"}</td>
-            `;
-
-        row.addEventListener("click", () => {
-            if (!lapUiState || !lapUiState.lapsByDriver[entry.driver_number]) return;
-            if (selectedDriverNumber === entry.driver_number) {
-                collapseLapExpansion();
-                return;
-            }
-            setSelectedDriver(entry.driver_number);
-        });
-
-        tbody.appendChild(row);
-    });
-
-    table.appendChild(tbody);
-    wrap.appendChild(table);
-}
-
-function renderInlineNotice(message) {
-    const wrap = document.getElementById("standings-wrap");
-    const note = document.createElement("div");
-    note.className = "inline-notice";
-    note.textContent = message;
-    wrap.appendChild(note);
-}
-
-function formatReplayTime(dateStr) {
-    if (!dateStr) return "—";
-    const d = new Date(dateStr);
-    return d.toLocaleTimeString("en-GB", {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-        timeZone: "UTC",
-    }) + " UTC";
-}
-
-function pickGapValue(intervalEntry) {
-    if (!intervalEntry) return null;
-    const raw = intervalEntry.gap_to_leader
-        ?? intervalEntry.interval_to_leader
-        ?? intervalEntry.interval
-        ?? intervalEntry.gap
-        ?? null;
-
-    if (raw === null || raw === undefined || raw === "") return null;
-
-    if (typeof raw === "number") return raw;
-
-    const str = String(raw).trim();
-    if (!str) return null;
-    const numeric = Number(str.replace("+", ""));
-    return Number.isFinite(numeric) ? numeric : str;
-}
-
-function formatGapValue(value, position) {
-    if (position === 1) return "LEADER";
-    if (value === null || value === undefined || value === "") return "—";
-    if (typeof value === "number") return value <= 0 ? "LEADER" : `+${value.toFixed(3)}s`;
-    return String(value).toUpperCase();
-}
-
-function buildReplayFrames(positions, laps, intervals) {
-    const positionEvents = new Map();
-    const lapEvents = new Map();
-    const gapEvents = new Map();
-    const allTimestamps = new Set();
-
-    positions.forEach(p => {
-        if (!p?.date || p.driver_number == null || p.position == null) return;
-        const ts = p.date;
-        if (!positionEvents.has(ts)) positionEvents.set(ts, []);
-        positionEvents.get(ts).push({
-            driverNumber: p.driver_number,
-            position: p.position,
-        });
-        allTimestamps.add(ts);
-    });
-
-    laps.forEach(l => {
-        if (!l?.date_start || l.driver_number == null || l.lap_number == null) return;
-        const ts = l.date_start;
-        if (!lapEvents.has(ts)) lapEvents.set(ts, []);
-        lapEvents.get(ts).push({
-            driverNumber: l.driver_number,
-            lapNumber: l.lap_number,
-        });
-        allTimestamps.add(ts);
-    });
-
-    intervals.forEach(i => {
-        if (!i?.date || i.driver_number == null) return;
-        const gap = pickGapValue(i);
-        if (gap === null) return;
-        const ts = i.date;
-        if (!gapEvents.has(ts)) gapEvents.set(ts, []);
-        gapEvents.get(ts).push({
-            driverNumber: i.driver_number,
-            gap,
-        });
-        allTimestamps.add(ts);
-    });
-
-    const sortedTimestamps = Array.from(allTimestamps).sort((a, b) =>
-        new Date(a).getTime() - new Date(b).getTime()
-    );
-    if (!sortedTimestamps.length) return [];
-
-    const maxFrames = 1200;
-    const step = Math.max(1, Math.ceil(sortedTimestamps.length / maxFrames));
-    const selectedTimestamps = new Set(
-        sortedTimestamps.filter((_, idx) => idx % step === 0 || idx === sortedTimestamps.length - 1)
-    );
-
-    const currentPositions = new Map();
-    const currentLaps = new Map();
-    const currentGaps = new Map();
-    const frames = [];
-
-    sortedTimestamps.forEach(ts => {
-        (positionEvents.get(ts) || []).forEach(event => {
-            currentPositions.set(event.driverNumber, event.position);
-        });
-        (lapEvents.get(ts) || []).forEach(event => {
-            currentLaps.set(event.driverNumber, event.lapNumber);
-        });
-        (gapEvents.get(ts) || []).forEach(event => {
-            currentGaps.set(event.driverNumber, event.gap);
-        });
-
-        if (!selectedTimestamps.has(ts)) return;
-
-        const standings = Array.from(currentPositions.entries())
-            .map(([driverNumber, position]) => ({
-                driverNumber,
-                position,
-                lapNumber: currentLaps.get(driverNumber) ?? null,
-                gap: currentGaps.get(driverNumber) ?? null,
-            }))
-            .sort((a, b) => a.position - b.position);
-
-        if (!standings.length) return;
-
-        const leader = standings.find(s => s.position === 1);
-        frames.push({
-            timestamp: ts,
-            leaderLap: leader?.lapNumber ?? null,
-            standings,
-        });
-    });
-
-    return frames;
-}
-
-function toggleReplayPlayback() {
-    if (!replayState) return;
-
-    if (replayState.timer) {
-        clearInterval(replayState.timer);
-        replayState.timer = null;
-        replayState.playButton.textContent = "Play";
-        return;
-    }
-
-    replayState.playButton.textContent = "Pause";
-    replayState.timer = setInterval(() => {
-        if (!replayState) return;
-        if (replayState.index >= replayState.frames.length - 1) {
-            clearInterval(replayState.timer);
-            replayState.timer = null;
-            replayState.playButton.textContent = "Play";
-            return;
-        }
-
-        replayState.index += 1;
-        renderReplayFrame(replayState.index);
-    }, 280);
-}
-
-function renderReplayFrame(index) {
-    if (!replayState) return;
-    replayState.index = Math.max(0, Math.min(index, replayState.frames.length - 1));
-
-    const frame = replayState.frames[replayState.index];
-    replayState.slider.value = String(replayState.index);
-    replayState.timeLabel.textContent = formatReplayTime(frame.timestamp);
-    replayState.lapLabel.textContent = frame.leaderLap ? `Leader Lap ${frame.leaderLap}` : "Leader Lap —";
-
-    replayState.tableBody.innerHTML = "";
-    frame.standings.forEach(entry => {
-        const driver = replayState.driverMap[entry.driverNumber] || {};
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td class="mono-cell replay-pos">${entry.position}</td>
-          <td>
-            <div class="driver-cell replay-driver-cell">
-              <div class="team-stripe" style="background:${teamColor(driver.team_name)}"></div>
-              <div>
-                <div class="driver-code">${driver.name_acronym || `#${entry.driverNumber}`}</div>
-                <div class="driver-full">${driver.full_name || ""}</div>
-              </div>
-            </div>
-          </td>
-          <td class="mono-cell">${entry.lapNumber ?? "—"}</td>
-          <td class="mono-cell">${formatGapValue(entry.gap, entry.position)}</td>
-        `;
-        replayState.tableBody.appendChild(tr);
-    });
-}
-
-function initReplayPanel(drivers, positions, laps, intervals) {
-    const panel = document.getElementById("replay-panel");
-    const driverMap = {};
-    drivers.forEach(d => {
-        driverMap[d.driver_number] = d;
-    });
-
-    const frames = buildReplayFrames(positions, laps, intervals);
-    if (frames.length < 2) {
-        panel.classList.add("hidden");
-        return;
-    }
-
-    panel.classList.remove("hidden");
-    panel.innerHTML = `
-      <div class="replay-header">
-        <div>
-          <div class="replay-title">Session Replay</div>
-          <div class="replay-sub">Use the slider to inspect position, lap, and gap progression.</div>
-        </div>
-        <div class="replay-meta">
-          <span id="replay-time">—</span>
-          <span id="replay-lap">Leader Lap —</span>
-        </div>
-      </div>
-      <div class="replay-controls">
-        <button id="replay-play-btn" type="button">Play</button>
-        <input id="replay-slider" type="range" min="0" max="${frames.length - 1}" value="${frames.length - 1}" step="1" />
-      </div>
-      <div class="replay-table-wrap">
-        <table class="standings-table replay-table">
-          <thead>
-            <tr>
-              <th>POS</th>
-              <th>DRIVER</th>
-              <th>LAP</th>
-              <th>GAP</th>
-            </tr>
-          </thead>
-          <tbody id="replay-body"></tbody>
-        </table>
-      </div>
-    `;
-
-    const playButton = document.getElementById("replay-play-btn");
-    const slider = document.getElementById("replay-slider");
-    const timeLabel = document.getElementById("replay-time");
-    const lapLabel = document.getElementById("replay-lap");
-    const tableBody = document.getElementById("replay-body");
-
-    replayState = {
-        frames,
-        driverMap,
-        playButton,
-        slider,
-        timeLabel,
-        lapLabel,
-        tableBody,
-        timer: null,
-        index: frames.length - 1,
-    };
-
-    playButton.addEventListener("click", toggleReplayPlayback);
-    slider.addEventListener("input", e => {
-        if (!replayState) return;
-        if (replayState.timer) {
-            clearInterval(replayState.timer);
-            replayState.timer = null;
-            replayState.playButton.textContent = "Play";
-        }
-        renderReplayFrame(Number(e.target.value));
-    });
-
-    renderReplayFrame(frames.length - 1);
-}
-
-function showStatus(msg, type = "loading") {
+function showStatus(message, type = "loading") {
     const el = document.getElementById("status");
     el.className = `status ${type}`;
     el.innerHTML = type === "loading"
-        ? `<div class="spinner"></div><span>${msg}</span>`
-        : `<span>⚠ ${msg}</span>`;
+        ? `<div class="spinner"></div><span>${message}</span>`
+        : `<span>${message}</span>`;
     el.classList.remove("hidden");
 }
 
@@ -462,210 +82,742 @@ function hideStatus() {
     document.getElementById("status").classList.add("hidden");
 }
 
-document.addEventListener("DOMContentLoaded", () => loadStandings());
+function teamColor(teamName) {
+    if (!teamName) return "#6e6e7c";
+    const key = Object.keys(TEAM_COLORS).find((item) =>
+        teamName.toLowerCase().includes(item.toLowerCase())
+    );
+    return key ? TEAM_COLORS[key] : "#6e6e7c";
+}
 
+function parseTimeMs(value) {
+    if (!value) return null;
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : null;
+}
+
+function formatElapsed(totalSeconds) {
+    const seconds = Math.max(0, Math.floor(totalSeconds));
+    const h = Math.floor(seconds / 3600).toString().padStart(2, "0");
+    const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, "0");
+    const s = Math.floor(seconds % 60).toString().padStart(2, "0");
+    return `${h}:${m}:${s}`;
+}
+
+function formatClockTime(ms) {
+    const d = new Date(ms);
+    return d.toLocaleTimeString("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+        timeZone: "UTC",
+    });
+}
 
 function formatLapTime(seconds) {
-    if (!seconds || seconds <= 0) return "—";
+    if (!Number.isFinite(seconds) || seconds <= 0) return "--";
     const mins = Math.floor(seconds / 60);
     const secs = (seconds % 60).toFixed(3).padStart(6, "0");
     return `${mins}:${secs}`;
 }
 
-function formatDelta(seconds) {
-    if (!seconds || seconds <= 0) return "—";
-    return `+${seconds.toFixed(3)}s`;
-}
-
 function isTimedLap(lap) {
     if (!lap) return false;
     if (lap.is_pit_out_lap) return false;
-    if (!(lap.lap_duration > 50 && lap.lap_duration < 150)) return false;
-    if (!(lap.duration_sector_1 > 10 && lap.duration_sector_2 > 10 && lap.duration_sector_3 > 10)) return false;
+    if (!Number.isFinite(lap.lap_duration)) return false;
+    if (lap.lap_duration <= 45 || lap.lap_duration >= 180) return false;
     return true;
 }
 
-function lapStats(laps) {
-    const valid = laps.filter(isTimedLap);
+function parseNumericGap(raw) {
+    if (raw === null || raw === undefined || raw === "") return null;
+    if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+    const parsed = Number(String(raw).replace("+", "").trim());
+    return Number.isFinite(parsed) ? parsed : null;
+}
 
-    if (!valid.length) {
-        return {
-            valid,
-            best: null,
-            sector1Best: null,
-            sector2Best: null,
-            sector3Best: null,
+function formatGap(gap, position) {
+    if (position === 1) return "LEADER";
+    if (Number.isFinite(gap)) return `+${gap.toFixed(3)}`;
+    return "--";
+}
+
+function formatInterval(raw) {
+    if (raw === null || raw === undefined || raw === "") return "--";
+    if (typeof raw === "number") return `+${raw.toFixed(3)}`;
+    const text = String(raw).trim();
+    return text ? text.toUpperCase() : "--";
+}
+
+function latestIndexAtOrBefore(series, ms) {
+    let left = 0;
+    let right = series.length - 1;
+    let best = -1;
+
+    while (left <= right) {
+        const mid = Math.floor((left + right) / 2);
+        if (series[mid].ms <= ms) {
+            best = mid;
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+
+    return best;
+}
+
+function latestValue(series, ms) {
+    if (!series.length) return null;
+    const idx = latestIndexAtOrBefore(series, ms);
+    return idx >= 0 ? series[idx] : null;
+}
+
+function valuesUpTo(series, ms) {
+    if (!series.length) return [];
+    const idx = latestIndexAtOrBefore(series, ms);
+    return idx >= 0 ? series.slice(0, idx + 1) : [];
+}
+
+function sessionMode(sessionInfo) {
+    const type = String(sessionInfo?.session_type || sessionInfo?.session_name || "").toLowerCase();
+    if (type.includes("race") || type.includes("sprint")) return "race";
+    return "timed";
+}
+
+function buildIndexes(drivers, positions, laps, intervals) {
+    const byDriver = {};
+
+    drivers.forEach((driver) => {
+        byDriver[driver.driver_number] = {
+            positionSeries: [],
+            gapSeries: [],
+            intervalSeries: [],
+            lapStartSeries: [],
+            lapEndSeries: [],
+            pitEvents: [],
         };
-    }
-
-    const durations = valid.map(l => l.lap_duration);
-    const best = Math.min(...durations);
-    const sector1Best = Math.min(...valid.map(l => l.duration_sector_1));
-    const sector2Best = Math.min(...valid.map(l => l.duration_sector_2));
-    const sector3Best = Math.min(...valid.map(l => l.duration_sector_3));
-
-    return { valid, best, sector1Best, sector2Best, sector3Best };
-}
-
-function renderLapTimes(laps, driverMap) {
-    if (!laps.length) {
-        renderInlineNotice("No lap data available for this session.");
-        return;
-    }
-
-    const validLaps = laps.filter(isTimedLap);
-    const fastestTime = validLaps.length ? Math.min(...validLaps.map(l => l.lap_duration)) : null;
-
-    const lapsByDriver = laps.reduce((acc, lap) => {
-        if (!acc[lap.driver_number]) acc[lap.driver_number] = [];
-        acc[lap.driver_number].push(lap);
-        return acc;
-    }, {});
-
-    lapUiState = {
-        lapsByDriver,
-        fastestTime,
-        sessionStats: lapStats(validLaps),
-        driverMap,
-    };
-
-    renderInlineNotice("Click a driver row to expand lap details.");
-}
-
-
-function collapseLapExpansion() {
-    const expandedRow = document.querySelector(".lap-expand-row");
-    if (expandedRow) expandedRow.remove();
-
-    const rows = document.querySelectorAll(".driver-row");
-    rows.forEach(row => row.classList.remove("active"));
-
-    selectedDriverNumber = null;
-}
-
-
-function setSelectedDriver(driverNumber) {
-    if (!lapUiState || !lapUiState.lapsByDriver[driverNumber]) return;
-
-    selectedDriverNumber = Number(driverNumber);
-    collapseLapExpansion();
-    selectedDriverNumber = Number(driverNumber);
-
-    const selectedRow = document.querySelector(`.driver-row[data-driver-number="${driverNumber}"]`);
-    if (!selectedRow) return;
-    selectedRow.classList.add("active");
-
-    const expandedRow = document.createElement("tr");
-    expandedRow.className = "lap-expand-row";
-    expandedRow.innerHTML = `
-      <td colspan="4">
-        <div class="lap-expand-panel">
-          <div class="lap-metrics"></div>
-          <div class="lap-table-wrap"></div>
-        </div>
-      </td>
-    `;
-    selectedRow.insertAdjacentElement("afterend", expandedRow);
-
-    const metrics = expandedRow.querySelector(".lap-metrics");
-    const tableWrap = expandedRow.querySelector(".lap-table-wrap");
-    const laps = lapUiState.lapsByDriver[driverNumber];
-
-    updateLapOverview(
-        metrics,
-        tableWrap,
-        laps,
-        lapUiState.fastestTime,
-        lapUiState.sessionStats,
-        lapUiState.driverMap[driverNumber]
-    );
-}
-
-
-function updateLapOverview(metricsContainer, tableContainer, laps, fastestTime, sessionStats, driver) {
-        const stats = lapStats(laps || []);
-        const sessionBest = sessionStats?.best ?? null;
-        const deltaToSessionBest = stats.best && sessionBest ? stats.best - sessionBest : null;
-
-        metricsContainer.innerHTML = `
-            <div class="metric-card">
-                <div class="metric-label">Selected Driver</div>
-                <div class="metric-value">${driver?.name_acronym || `#${selectedDriverNumber || "—"}`}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Best Timed Lap</div>
-                <div class="metric-value">${formatLapTime(stats.best)}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Timed Laps</div>
-                <div class="metric-value">${stats.valid.length}</div>
-            </div>
-            <div class="metric-card">
-                <div class="metric-label">Gap To Session Best</div>
-                <div class="metric-value">${deltaToSessionBest !== null && deltaToSessionBest > 0 ? formatDelta(deltaToSessionBest) : "—"}</div>
-            </div>
-        `;
-
-        renderLapTable(tableContainer, laps, fastestTime, stats.best, sessionStats, stats);
-}
-
-
-    function renderLapTable(container, laps, fastestTime, selectedDriverBest, sessionStats, driverStats) {
-    if (!laps || !laps.length) {
-        container.innerHTML = `<div class="empty-msg">No lap data.</div>`;
-        return;
-    }
-
-    // Sort by lap number
-    laps.sort((a, b) => a.lap_number - b.lap_number);
-
-    const table = document.createElement("table");
-    table.className = "standings-table";
-    table.innerHTML = `
-        <thead>
-        <tr>
-            <th>LAP</th>
-            <th style="text-align:right">TIME</th>
-            <th style="text-align:right">DELTA</th>
-            <th style="text-align:right">S1</th>
-            <th style="text-align:right">S2</th>
-            <th style="text-align:right">S3</th>
-            <th>NOTE</th>
-        </tr>
-        </thead>
-    `;
-
-    const tbody = document.createElement("tbody");
-
-    laps.forEach(lap => {
-                const isFastest = fastestTime !== null && lap.lap_duration === fastestTime;
-                const isDriverBest = selectedDriverBest !== null && lap.lap_duration === selectedDriverBest;
-        const isPitOut = lap.is_pit_out_lap;
-                const delta = lap.lap_duration > 0 && selectedDriverBest ? lap.lap_duration - selectedDriverBest : null;
-            const isSector1SessionBest = sessionStats?.sector1Best !== null && lap.duration_sector_1 === sessionStats?.sector1Best;
-            const isSector2SessionBest = sessionStats?.sector2Best !== null && lap.duration_sector_2 === sessionStats?.sector2Best;
-            const isSector3SessionBest = sessionStats?.sector3Best !== null && lap.duration_sector_3 === sessionStats?.sector3Best;
-            const isSector1DriverBest = driverStats?.sector1Best !== null && lap.duration_sector_1 === driverStats?.sector1Best;
-            const isSector2DriverBest = driverStats?.sector2Best !== null && lap.duration_sector_2 === driverStats?.sector2Best;
-            const isSector3DriverBest = driverStats?.sector3Best !== null && lap.duration_sector_3 === driverStats?.sector3Best;
-
-        const row = document.createElement("tr");
-        row.innerHTML = `
-      <td class="mono-cell" style="text-align:left">${lap.lap_number}</td>
-            <td class="mono-cell ${isFastest ? "fastest" : ""} ${isDriverBest ? "personal-best" : ""}">${formatLapTime(lap.lap_duration)}</td>
-            <td class="mono-cell">${delta !== null && delta > 0 ? formatDelta(delta) : "—"}</td>
-        <td class="mono-cell ${isSector1SessionBest ? "fastest" : isSector1DriverBest ? "personal-best" : ""}">${formatLapTime(lap.duration_sector_1)}</td>
-        <td class="mono-cell ${isSector2SessionBest ? "fastest" : isSector2DriverBest ? "personal-best" : ""}">${formatLapTime(lap.duration_sector_2)}</td>
-        <td class="mono-cell ${isSector3SessionBest ? "fastest" : isSector3DriverBest ? "personal-best" : ""}">${formatLapTime(lap.duration_sector_3)}</td>
-      <td class="mono-cell ${isPitOut ? "pit-lap" : ""}">
-                ${isFastest ? "◆ SESSION BEST" : isDriverBest ? "● PERSONAL BEST" : isPitOut ? "PIT OUT" : ""}
-      </td>
-    `;
-
-        tbody.appendChild(row);
     });
 
-    table.appendChild(tbody);
-    container.innerHTML = "";
-    container.appendChild(table);
+    positions.forEach((item) => {
+        if (item.driver_number == null || item.position == null) return;
+        const ms = parseTimeMs(item.date);
+        if (ms === null) return;
+
+        const bucket = byDriver[item.driver_number];
+        if (!bucket) return;
+
+        bucket.positionSeries.push({ ms, position: Number(item.position) });
+    });
+
+    intervals.forEach((item) => {
+        if (item.driver_number == null) return;
+        const ms = parseTimeMs(item.date);
+        if (ms === null) return;
+
+        const bucket = byDriver[item.driver_number];
+        if (!bucket) return;
+
+        const gapRaw = item.gap_to_leader ?? item.interval_to_leader ?? item.gap ?? null;
+        const aheadRaw = item.interval_to_position_ahead ?? item.interval_to_car_ahead ?? item.interval ?? null;
+
+        bucket.gapSeries.push({
+            ms,
+            gap: parseNumericGap(gapRaw),
+            raw: gapRaw,
+        });
+        bucket.intervalSeries.push({
+            ms,
+            interval: aheadRaw,
+        });
+    });
+
+    laps.forEach((item) => {
+        if (item.driver_number == null || item.lap_number == null) return;
+        const startMs = parseTimeMs(item.date_start);
+        if (startMs === null) return;
+
+        const duration = Number(item.lap_duration);
+        const endMs = Number.isFinite(duration) ? startMs + Math.round(duration * 1000) : startMs;
+
+        const bucket = byDriver[item.driver_number];
+        if (!bucket) return;
+
+        const lapRecord = {
+            ms: startMs,
+            endMs,
+            lapNumber: Number(item.lap_number),
+            lapDuration: Number.isFinite(duration) ? duration : null,
+            s1: Number.isFinite(item.duration_sector_1) ? item.duration_sector_1 : null,
+            s2: Number.isFinite(item.duration_sector_2) ? item.duration_sector_2 : null,
+            s3: Number.isFinite(item.duration_sector_3) ? item.duration_sector_3 : null,
+            isPitOut: Boolean(item.is_pit_out_lap),
+            timed: isTimedLap(item),
+        };
+
+        bucket.lapStartSeries.push({ ms: startMs, lapNumber: lapRecord.lapNumber });
+        bucket.lapEndSeries.push(lapRecord);
+        if (lapRecord.isPitOut) {
+            bucket.pitEvents.push({ ms: endMs, lapNumber: lapRecord.lapNumber });
+        }
+    });
+
+    Object.values(byDriver).forEach((driverData) => {
+        driverData.positionSeries.sort((a, b) => a.ms - b.ms);
+        driverData.gapSeries.sort((a, b) => a.ms - b.ms);
+        driverData.intervalSeries.sort((a, b) => a.ms - b.ms);
+        driverData.lapStartSeries.sort((a, b) => a.ms - b.ms);
+        driverData.lapEndSeries.sort((a, b) => a.endMs - b.endMs);
+        driverData.pitEvents.sort((a, b) => a.ms - b.ms);
+    });
+
+    const allTimes = [];
+
+    Object.values(byDriver).forEach((driverData) => {
+        driverData.positionSeries.forEach((x) => allTimes.push(x.ms));
+        driverData.gapSeries.forEach((x) => allTimes.push(x.ms));
+        driverData.lapStartSeries.forEach((x) => allTimes.push(x.ms));
+        driverData.lapEndSeries.forEach((x) => allTimes.push(x.endMs));
+    });
+
+    const startMs = allTimes.length ? Math.min(...allTimes) : Date.now();
+    const endMs = allTimes.length ? Math.max(...allTimes) : startMs;
+
+    return {
+        byDriver,
+        startMs,
+        endMs,
+    };
 }
+
+function buildTimelineScale() {
+    const scale = document.getElementById("timeline-scale");
+    const duration = appState.replay.durationSec;
+
+    const tickCount = 6;
+    const ticks = [];
+    for (let i = 0; i <= tickCount; i += 1) {
+        const sec = Math.round((duration * i) / tickCount);
+        ticks.push(`<span>${formatElapsed(sec)}</span>`);
+    }
+
+    scale.innerHTML = ticks.join("");
+}
+
+function setSpeed(speed) {
+    appState.replay.speed = speed;
+    document.querySelectorAll(".speed-btn").forEach((btn) => {
+        btn.classList.toggle("active", Number(btn.dataset.speed) === speed);
+    });
+}
+
+function togglePlayback() {
+    if (appState.replay.playing) {
+        stopPlayback();
+        return;
+    }
+
+    appState.replay.playing = true;
+    appState.replay.lastTick = performance.now();
+    document.getElementById("play-btn").textContent = "Pause";
+    appState.replay.rafId = requestAnimationFrame(playbackStep);
+}
+
+function stopPlayback() {
+    appState.replay.playing = false;
+    if (appState.replay.rafId) {
+        cancelAnimationFrame(appState.replay.rafId);
+        appState.replay.rafId = null;
+    }
+    document.getElementById("play-btn").textContent = "Play";
+}
+
+function playbackStep(now) {
+    if (!appState.replay.playing) return;
+
+    const dtMs = now - appState.replay.lastTick;
+    appState.replay.lastTick = now;
+
+    const deltaSec = (dtMs / 1000) * appState.replay.speed;
+    const nextSec = appState.replay.currentSec + deltaSec;
+
+    if (nextSec >= appState.replay.durationSec) {
+        appState.replay.currentSec = appState.replay.durationSec;
+        renderAtCurrentTime();
+        stopPlayback();
+        return;
+    }
+
+    appState.replay.currentSec = nextSec;
+    renderAtCurrentTime();
+    appState.replay.rafId = requestAnimationFrame(playbackStep);
+}
+
+function initTower() {
+    const header = document.getElementById("tower-header");
+    const body = document.getElementById("tower-body");
+
+    if (appState.mode === "race") {
+        header.innerHTML = `
+            <span>POS</span>
+            <span>DRIVER</span>
+            <span>LAP</span>
+            <span>GAP</span>
+            <span>INT</span>
+        `;
+    } else {
+        header.innerHTML = `
+            <span>POS</span>
+            <span>DRIVER</span>
+            <span>BEST</span>
+            <span>CURRENT</span>
+            <span>SECTORS</span>
+        `;
+    }
+
+    body.innerHTML = "";
+    appState.ui.rowsByDriver.clear();
+    appState.ui.prevPositions.clear();
+
+    appState.drivers.forEach((driver) => {
+        const row = document.createElement("div");
+        row.className = "tower-row";
+        row.dataset.driver = String(driver.driver_number);
+
+        if (appState.mode === "race") {
+            row.innerHTML = `
+                <div class="cell pos">--</div>
+                <div class="cell driver">
+                    <span class="team-dot" style="background:${teamColor(driver.team_name)}"></span>
+                    <span class="code">${driver.name_acronym || `#${driver.driver_number}`}</span>
+                </div>
+                <div class="cell lap">--</div>
+                <div class="cell gap">--</div>
+                <div class="cell interval">--</div>
+            `;
+        } else {
+            row.innerHTML = `
+                <div class="cell pos">--</div>
+                <div class="cell driver">
+                    <span class="team-dot" style="background:${teamColor(driver.team_name)}"></span>
+                    <span class="code">${driver.name_acronym || `#${driver.driver_number}`}</span>
+                </div>
+                <div class="cell best">--</div>
+                <div class="cell current">--</div>
+                <div class="cell sectors">
+                    <span class="sector">S1</span>
+                    <span class="sector">S2</span>
+                    <span class="sector">S3</span>
+                </div>
+            `;
+        }
+
+        body.appendChild(row);
+        appState.ui.rowsByDriver.set(driver.driver_number, row);
+    });
+
+    body.style.height = `${appState.drivers.length * ROW_HEIGHT}px`;
+}
+
+function renderRaceTower(currentMs) {
+    const standings = appState.drivers.map((driver) => {
+        const series = appState.indexes.byDriver[driver.driver_number];
+
+        const posRec = latestValue(series.positionSeries, currentMs);
+        const lapRec = latestValue(series.lapStartSeries, currentMs);
+        const gapRec = latestValue(series.gapSeries, currentMs);
+        const intRec = latestValue(series.intervalSeries, currentMs);
+
+        return {
+            driverNumber: driver.driver_number,
+            position: posRec?.position ?? 999,
+            lap: lapRec?.lapNumber ?? null,
+            gap: gapRec?.gap ?? null,
+            rawGap: gapRec?.raw ?? null,
+            interval: intRec?.interval ?? null,
+        };
+    }).sort((a, b) => a.position - b.position || a.driverNumber - b.driverNumber);
+
+    standings.forEach((entry, order) => {
+        const row = appState.ui.rowsByDriver.get(entry.driverNumber);
+        if (!row) return;
+
+        row.style.transform = `translateY(${order * ROW_HEIGHT}px)`;
+
+        const prevPos = appState.ui.prevPositions.get(entry.driverNumber);
+        appState.ui.prevPositions.set(entry.driverNumber, entry.position);
+        if (Number.isFinite(prevPos) && entry.position < prevPos) {
+            row.classList.add("overtake");
+            window.setTimeout(() => row.classList.remove("overtake"), 550);
+        }
+
+        row.querySelector(".pos").textContent = Number.isFinite(entry.position) && entry.position < 999
+            ? String(entry.position)
+            : "--";
+        row.querySelector(".lap").textContent = entry.lap == null ? "--" : `L${entry.lap}`;
+        row.querySelector(".gap").textContent = formatGap(entry.gap, entry.position);
+        row.querySelector(".interval").textContent = formatInterval(entry.interval);
+
+        row.classList.toggle("leader", entry.position === 1);
+    });
+}
+
+function getCompletedTimedLaps(series, currentMs) {
+    return series.lapEndSeries.filter((lap) => lap.timed && lap.endMs <= currentMs);
+}
+
+function findCurrentLap(series, currentMs) {
+    const lap = series.lapEndSeries.find((item) => item.ms <= currentMs && item.endMs > currentMs);
+    return lap || null;
+}
+
+function sectorClass(value, fieldBest, driverBest) {
+    if (!Number.isFinite(value)) return "";
+    if (Number.isFinite(fieldBest) && value <= fieldBest + 0.0005) return "purple";
+    if (Number.isFinite(driverBest) && value <= driverBest + 0.0005) return "green";
+    return "yellow";
+}
+
+function renderTimedTower(currentMs) {
+    const allCompleted = [];
+
+    appState.drivers.forEach((driver) => {
+        const series = appState.indexes.byDriver[driver.driver_number];
+        allCompleted.push(...getCompletedTimedLaps(series, currentMs));
+    });
+
+    const fieldBestS1 = allCompleted.length ? Math.min(...allCompleted.map((l) => l.s1).filter(Number.isFinite)) : null;
+    const fieldBestS2 = allCompleted.length ? Math.min(...allCompleted.map((l) => l.s2).filter(Number.isFinite)) : null;
+    const fieldBestS3 = allCompleted.length ? Math.min(...allCompleted.map((l) => l.s3).filter(Number.isFinite)) : null;
+
+    const ranking = appState.drivers.map((driver) => {
+        const series = appState.indexes.byDriver[driver.driver_number];
+        const completed = getCompletedTimedLaps(series, currentMs);
+        const currentLap = findCurrentLap(series, currentMs);
+
+        const bestLap = completed.length
+            ? Math.min(...completed.map((lap) => lap.lapDuration).filter(Number.isFinite))
+            : null;
+
+        const personalBestS1 = completed.length ? Math.min(...completed.map((lap) => lap.s1).filter(Number.isFinite)) : null;
+        const personalBestS2 = completed.length ? Math.min(...completed.map((lap) => lap.s2).filter(Number.isFinite)) : null;
+        const personalBestS3 = completed.length ? Math.min(...completed.map((lap) => lap.s3).filter(Number.isFinite)) : null;
+
+        return {
+            driverNumber: driver.driver_number,
+            bestLap,
+            currentLap,
+            sectorClasses: {
+                s1: sectorClass(currentLap?.s1, fieldBestS1, personalBestS1),
+                s2: sectorClass(currentLap?.s2, fieldBestS2, personalBestS2),
+                s3: sectorClass(currentLap?.s3, fieldBestS3, personalBestS3),
+            },
+        };
+    }).sort((a, b) => {
+        const av = Number.isFinite(a.bestLap) ? a.bestLap : Number.POSITIVE_INFINITY;
+        const bv = Number.isFinite(b.bestLap) ? b.bestLap : Number.POSITIVE_INFINITY;
+        if (av !== bv) return av - bv;
+        return a.driverNumber - b.driverNumber;
+    });
+
+    ranking.forEach((entry, order) => {
+        const row = appState.ui.rowsByDriver.get(entry.driverNumber);
+        if (!row) return;
+
+        row.style.transform = `translateY(${order * ROW_HEIGHT}px)`;
+
+        row.querySelector(".pos").textContent = Number.isFinite(entry.bestLap) ? String(order + 1) : "--";
+        row.querySelector(".best").textContent = formatLapTime(entry.bestLap);
+        row.querySelector(".current").textContent = entry.currentLap ? `L${entry.currentLap.lapNumber}` : "--";
+
+        const sectors = row.querySelectorAll(".sector");
+        sectors[0].className = `sector ${entry.sectorClasses.s1}`.trim();
+        sectors[1].className = `sector ${entry.sectorClasses.s2}`.trim();
+        sectors[2].className = `sector ${entry.sectorClasses.s3}`.trim();
+    });
+}
+
+function svgEl(name, attrs = {}) {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", name);
+    Object.entries(attrs).forEach(([key, value]) => {
+        el.setAttribute(key, String(value));
+    });
+    return el;
+}
+
+function clearChart() {
+    const chart = document.getElementById("main-chart");
+    chart.innerHTML = "";
+    return chart;
+}
+
+function chartPoint(x, y, width, height, maxX, maxY) {
+    const px = 60 + (x / Math.max(1, maxX)) * (width - 80);
+    const py = 20 + (1 - (y / Math.max(0.0001, maxY))) * (height - 70);
+    return { px, py };
+}
+
+function drawAxes(chart, width, height, yLabel) {
+    chart.appendChild(svgEl("line", { x1: 60, y1: 20, x2: 60, y2: height - 50, class: "axis-line" }));
+    chart.appendChild(svgEl("line", { x1: 60, y1: height - 50, x2: width - 20, y2: height - 50, class: "axis-line" }));
+
+    chart.appendChild(svgEl("text", {
+        x: 16,
+        y: 24,
+        class: "axis-text",
+    })).textContent = yLabel;
+
+    chart.appendChild(svgEl("text", {
+        x: width - 70,
+        y: height - 18,
+        class: "axis-text",
+    })).textContent = "time";
+}
+
+function renderGapChart(currentMs) {
+    const chart = clearChart();
+    const width = 900;
+    const height = 420;
+
+    const spanMs = Math.max(1, appState.indexes.endMs - appState.indexes.startMs);
+
+    const allVisible = [];
+    appState.drivers.forEach((driver) => {
+        const series = appState.indexes.byDriver[driver.driver_number].gapSeries;
+        valuesUpTo(series, currentMs).forEach((p) => {
+            if (Number.isFinite(p.gap)) allVisible.push(p.gap);
+        });
+    });
+
+    const maxGap = allVisible.length ? Math.max(...allVisible) : 1;
+    drawAxes(chart, width, height, "gap");
+
+    appState.drivers.forEach((driver) => {
+        const series = appState.indexes.byDriver[driver.driver_number];
+        const points = valuesUpTo(series.gapSeries, currentMs)
+            .filter((item) => Number.isFinite(item.gap))
+            .map((item) => {
+                const x = item.ms - appState.indexes.startMs;
+                return chartPoint(x, item.gap, width, height, spanMs, maxGap);
+            });
+
+        if (points.length < 2) return;
+
+        const polyline = svgEl("polyline", {
+            points: points.map((p) => `${p.px},${p.py}`).join(" "),
+            fill: "none",
+            stroke: teamColor(driver.team_name),
+            "stroke-width": 2.1,
+            "stroke-linecap": "round",
+            "stroke-linejoin": "round",
+            opacity: 0.95,
+        });
+        chart.appendChild(polyline);
+
+        const pitPoints = valuesUpTo(series.pitEvents, currentMs);
+        pitPoints.forEach((pit) => {
+            const gapAtPit = latestValue(series.gapSeries, pit.ms);
+            const yVal = Number.isFinite(gapAtPit?.gap) ? gapAtPit.gap : 0;
+            const point = chartPoint(pit.ms - appState.indexes.startMs, yVal, width, height, spanMs, maxGap);
+            chart.appendChild(svgEl("circle", {
+                cx: point.px,
+                cy: point.py,
+                r: 3.2,
+                class: "pit-marker",
+            }));
+        });
+    });
+}
+
+function renderLapDistributionChart(currentMs) {
+    const chart = clearChart();
+    const width = 900;
+    const height = 420;
+    const spanMs = Math.max(1, appState.indexes.endMs - appState.indexes.startMs);
+
+    const points = [];
+    appState.drivers.forEach((driver) => {
+        const laps = valuesUpTo(appState.indexes.byDriver[driver.driver_number].lapEndSeries, currentMs)
+            .filter((lap) => lap.timed && Number.isFinite(lap.lapDuration));
+
+        laps.forEach((lap) => {
+            points.push({
+                driver,
+                xMs: lap.endMs - appState.indexes.startMs,
+                y: lap.lapDuration,
+            });
+        });
+    });
+
+    const yValues = points.map((p) => p.y);
+    const minLap = yValues.length ? Math.min(...yValues) : 60;
+    const maxLap = yValues.length ? Math.max(...yValues) : 120;
+    const spanLap = Math.max(1, maxLap - minLap);
+
+    drawAxes(chart, width, height, "lap");
+
+    points.forEach((point) => {
+        const px = 60 + (point.xMs / spanMs) * (width - 80);
+        const py = 20 + (1 - ((point.y - minLap) / spanLap)) * (height - 70);
+        chart.appendChild(svgEl("circle", {
+            cx: px,
+            cy: py,
+            r: 3.1,
+            fill: teamColor(point.driver.team_name),
+            opacity: 0.88,
+        }));
+    });
+}
+
+function renderAtCurrentTime() {
+    const currentMs = appState.indexes.startMs + Math.round(appState.replay.currentSec * 1000);
+
+    document.getElementById("timeline").value = String(Math.floor(appState.replay.currentSec));
+    document.getElementById("clock-label").textContent = formatClockTime(currentMs);
+    document.getElementById("timeline-meta").textContent = `${formatElapsed(appState.replay.currentSec)} / ${formatElapsed(appState.replay.durationSec)}`;
+
+    let leaderLap = "--";
+
+    if (appState.mode === "race") {
+        renderRaceTower(currentMs);
+        renderGapChart(currentMs);
+
+        const leader = appState.drivers
+            .map((driver) => {
+                const d = appState.indexes.byDriver[driver.driver_number];
+                const pos = latestValue(d.positionSeries, currentMs)?.position ?? 999;
+                const lap = latestValue(d.lapStartSeries, currentMs)?.lapNumber ?? null;
+                return { pos, lap };
+            })
+            .sort((a, b) => a.pos - b.pos)[0];
+        if (leader && leader.lap != null) leaderLap = String(leader.lap);
+    } else {
+        renderTimedTower(currentMs);
+        renderLapDistributionChart(currentMs);
+
+        const mostAdvanced = appState.drivers
+            .map((driver) => latestValue(appState.indexes.byDriver[driver.driver_number].lapStartSeries, currentMs)?.lapNumber ?? 0)
+            .sort((a, b) => b - a)[0];
+        if (mostAdvanced) leaderLap = String(mostAdvanced);
+    }
+
+    document.getElementById("lap-label").textContent = `Lap ${leaderLap}`;
+}
+
+function initReplayControls() {
+    const timeline = document.getElementById("timeline");
+    timeline.min = "0";
+    timeline.max = String(Math.floor(appState.replay.durationSec));
+    timeline.step = "1";
+    timeline.value = "0";
+
+    document.getElementById("play-btn").addEventListener("click", togglePlayback);
+
+    timeline.addEventListener("input", (event) => {
+        appState.replay.currentSec = Number(event.target.value);
+        if (appState.replay.playing) stopPlayback();
+        renderAtCurrentTime();
+    });
+
+    document.querySelectorAll(".speed-btn").forEach((button) => {
+        button.addEventListener("click", () => {
+            setSpeed(Number(button.dataset.speed));
+        });
+    });
+
+    buildTimelineScale();
+    setSpeed(1);
+}
+
+function fillHeaderMeta() {
+    const info = appState.sessionInfo || {};
+    const sessionName = info.session_name || info.session_type || `Session ${SESSION_KEY}`;
+    const date = info.date_start ? new Date(info.date_start).toLocaleDateString("en-GB") : "Date n/a";
+    const location = info.location || info.country_name || "OpenF1";
+
+    document.getElementById("session-meta").textContent = `${sessionName} - ${location} - ${date}`;
+}
+
+function configureModeUi() {
+    const towerTitle = document.getElementById("tower-title");
+    const towerSub = document.getElementById("tower-sub");
+    const chartTitle = document.getElementById("chart-title");
+    const chartSub = document.getElementById("chart-sub");
+
+    if (appState.mode === "race") {
+        towerTitle.textContent = "Live Leaderboard";
+        towerSub.textContent = "Position, gap to leader, and interval to car ahead";
+        chartTitle.textContent = "Gap Chart";
+        chartSub.textContent = "All drivers vs session leader with pit markers";
+    } else {
+        towerTitle.textContent = "Best Lap Tower";
+        towerSub.textContent = "Resorts whenever a new personal best is set";
+        chartTitle.textContent = "Lap Time Distribution";
+        chartSub.textContent = "All timed laps set so far by replay time";
+    }
+}
+
+async function loadSessionView() {
+    showStatus("Fetching OpenF1 session datasets...");
+
+    const [
+        sessionResult,
+        driversResult,
+        positionsResult,
+        lapsResult,
+        intervalsResult,
+    ] = await Promise.allSettled([
+        apiFetch("/api/session_info", { session_key: SESSION_KEY }),
+        apiFetch("/api/drivers", { session_key: SESSION_KEY }),
+        apiFetch("/api/positions", { session_key: SESSION_KEY }),
+        apiFetch("/api/laps", { session_key: SESSION_KEY }),
+        apiFetch("/api/intervals", { session_key: SESSION_KEY }),
+    ]);
+
+    if (driversResult.status === "rejected") {
+        throw driversResult.reason;
+    }
+
+    if (positionsResult.status === "rejected" && lapsResult.status === "rejected") {
+        throw new Error("Session data unavailable. OpenF1 position and lap feeds failed.");
+    }
+
+    appState.sessionInfo = sessionResult.status === "fulfilled" ? sessionResult.value : {};
+    appState.drivers = driversResult.value || [];
+
+    appState.driverMap = {};
+    appState.drivers.forEach((driver) => {
+        appState.driverMap[driver.driver_number] = driver;
+    });
+
+    const positions = positionsResult.status === "fulfilled" ? positionsResult.value : [];
+    const laps = lapsResult.status === "fulfilled" ? lapsResult.value : [];
+    const intervals = intervalsResult.status === "fulfilled" ? intervalsResult.value : [];
+
+    appState.mode = sessionMode(appState.sessionInfo);
+    appState.indexes = buildIndexes(appState.drivers, positions, laps, intervals);
+
+    appState.replay.startMs = appState.indexes.startMs;
+    appState.replay.endMs = appState.indexes.endMs;
+    appState.replay.durationSec = Math.max(1, Math.floor((appState.replay.endMs - appState.replay.startMs) / 1000));
+    appState.replay.currentSec = 0;
+
+    fillHeaderMeta();
+    configureModeUi();
+    initTower();
+    initReplayControls();
+
+    document.getElementById("session-shell").classList.remove("hidden");
+    hideStatus();
+    renderAtCurrentTime();
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+    try {
+        await loadSessionView();
+    } catch (err) {
+        const message = err?.message || "Unknown error";
+        showStatus(`Error: ${message}`, "error");
+    }
+});

@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Session Detail</title>
+  <title>F1 Session Replay</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Barlow+Condensed:wght@300;400;600;700;900&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Barlow+Condensed:wght@300;400;600;700;900&family=Teko:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
   <link rel="stylesheet" href="/static/session.css" />
 </head>
@@ -18,19 +18,67 @@
           <span>F1 <strong>Pit Wall</strong></span>
         </a>
       </div>
-      <div id="session-meta" style="font-size:14px;color:var(--text2)">Loading…</div>
+      <div id="session-meta" class="session-meta">Loading...</div>
     </div>
   </header>
 
-  <main>
+  <main class="session-main">
     <div id="status" class="status hidden"></div>
-    <section id="replay-panel" class="replay-panel hidden"></section>
-    <div id="standings-wrap"></div>
+
+    <section id="session-shell" class="session-shell hidden">
+      <section class="replay-ribbon" id="replay-ribbon">
+        <div class="replay-ribbon-top">
+          <div class="replay-title-wrap">
+            <div class="replay-kicker">Replay Control</div>
+            <h1 class="replay-title">Session Timeline</h1>
+          </div>
+          <div class="replay-live-meta">
+            <span id="clock-label">00:00:00</span>
+            <span id="lap-label">Lap --</span>
+          </div>
+        </div>
+
+        <div class="replay-controls-row">
+          <button id="play-btn" type="button" class="replay-btn">Play</button>
+          <div class="speed-cluster" id="speed-cluster">
+            <button type="button" data-speed="1" class="speed-btn active">1x</button>
+            <button type="button" data-speed="2" class="speed-btn">2x</button>
+            <button type="button" data-speed="5" class="speed-btn">5x</button>
+            <button type="button" data-speed="10" class="speed-btn">10x</button>
+          </div>
+          <div class="timeline-meta" id="timeline-meta">00:00 / 00:00</div>
+        </div>
+
+        <div class="timeline-wrap">
+          <input id="timeline" type="range" min="0" max="0" value="0" step="1" />
+          <div class="timeline-scale" id="timeline-scale"></div>
+        </div>
+      </section>
+
+      <section class="session-grid">
+        <article class="tower-panel">
+          <div class="panel-head">
+            <div class="panel-title" id="tower-title">Leaderboard</div>
+            <div class="panel-sub" id="tower-sub">Updating by replay clock</div>
+          </div>
+          <div class="tower-header" id="tower-header"></div>
+          <div class="tower-body" id="tower-body"></div>
+        </article>
+
+        <article class="chart-panel">
+          <div class="panel-head">
+            <div class="panel-title" id="chart-title">Gap Evolution</div>
+            <div class="panel-sub" id="chart-sub">Relative to race leader</div>
+          </div>
+          <svg id="main-chart" class="main-chart" viewBox="0 0 900 420" preserveAspectRatio="none"></svg>
+        </article>
+      </section>
+    </section>
   </main>
 
 
   <script>
-    const SESSION_KEY = {{ session_key }};
+    const SESSION_KEY = Number("{{ session_key }}");
   </script>
   <script src="/static/session.js"></script>
 
