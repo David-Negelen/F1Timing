@@ -5,6 +5,79 @@
   margin-top: 24px;
 }
 
+#standings-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.replay-panel {
+  background: linear-gradient(180deg, rgba(24, 24, 31, 0.94), rgba(17, 17, 22, 0.96));
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+
+.replay-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.replay-title {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text2);
+}
+
+.replay-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text3);
+}
+
+.replay-meta {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text2);
+}
+
+.replay-controls {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+#replay-slider {
+  width: 100%;
+  accent-color: #c080ff;
+}
+
+.replay-table-wrap {
+  margin-top: 10px;
+}
+
+.replay-table {
+  margin-top: 0;
+}
+
+.replay-pos {
+  width: 56px;
+}
+
+.replay-driver-cell .driver-code {
+  font-size: 16px;
+}
+
 .standings-table thead th {
   padding: 8px 16px;
   font-size: 9px;
@@ -23,6 +96,29 @@
   transition: background 0.1s;
 }
 .standings-table tbody tr:hover { background: var(--bg2); }
+
+.driver-row {
+  cursor: pointer;
+}
+
+.driver-row.active {
+  background: rgba(192, 128, 255, 0.14);
+}
+
+.lap-expand-row td {
+  padding: 0 16px 14px;
+  background: rgba(17, 17, 22, 0.75);
+}
+
+.lap-expand-panel {
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.lap-expand-panel .standings-table {
+  margin-top: 10px;
+}
 
 .standings-table td {
   padding: 12px 16px;
@@ -69,23 +165,54 @@
 }
 
 
-.section-title {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--text3);
-  margin: 36px 0 14px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--border);
+.lap-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+  margin-bottom: 6px;
 }
 
-.lap-controls {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+.metric-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.metric-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--text3);
+}
+
+.metric-value {
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.inline-notice {
+  background: rgba(255, 135, 0, 0.08);
+  border: 1px solid rgba(255, 135, 0, 0.28);
+  color: var(--amber);
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 13px;
 }
 
 .fastest   { color: #c080ff; font-weight: 700; }  /* session best */
 .pit-lap   { color: var(--amber); }
+.personal-best { color: #8ce99a; }
+.fastest.personal-best { color: #c080ff; }
+
+@media (max-width: 860px) {
+  .standings-table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}

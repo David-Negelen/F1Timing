@@ -10,8 +10,21 @@ async function apiFetch(path, params = {}) {
     const response = await fetch(url);
 
     if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`${response.status}: ${text}`);
+        let payload = null;
+        try {
+            payload = await response.json();
+        } catch (_) {
+            payload = null;
+        }
+
+        const retryAfter = payload?.retry_after;
+        const apiError = payload?.error;
+        const baseMessage = apiError || `Request failed with ${response.status}`;
+        const hint = response.status === 429
+            ? ` Rate limit reached${retryAfter ? `, retry in ${retryAfter}s.` : "."}`
+            : "";
+
+        throw new Error(`${baseMessage}${hint}`);
     }
 
     return response.json();
@@ -74,6 +87,29 @@ function formatSessionDate(dateStr) {
         day: "numeric",
         month: "short",
     }) + " · " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) + " UTC";
+}
+
+function isFutureMeeting(meeting) {
+    if (!meeting?.date_start) return false;
+    return new Date(meeting.date_start) > new Date();
+}
+
+function isCancelledMeeting(meeting) {
+    const status = `${meeting?.status || ""} ${meeting?.meeting_status || ""}`.toLowerCase();
+    const names = `${meeting?.meeting_name || ""} ${meeting?.meeting_official_name || ""}`.toLowerCase();
+    const explicitFlag = meeting?.cancelled === true || meeting?.canceled === true || meeting?.is_cancelled === true;
+
+    return explicitFlag || status.includes("cancel") || names.includes("cancelled") || names.includes("canceled");
+}
+
+function getSessionStatus(session) {
+    const now = new Date();
+    const start = session.date_start ? new Date(session.date_start) : null;
+    const end = session.date_end ? new Date(session.date_end) : null;
+
+    if (start && start > now) return "upcoming";
+    if (start && end && start <= now && end >= now) return "live";
+    return "completed";
 }
 
 
@@ -142,9 +178,11 @@ async function loadRaces() {
 function buildRaceCard(meeting, roundNumber) {
     const flag = getFlag(meeting.country_name);
     const date = formatDate(meeting.date_start);
+    const isFuture = isFutureMeeting(meeting);
+    const isCancelled = isCancelledMeeting(meeting);
 
     const card = document.createElement("div");
-    card.className = "race-card";
+    card.className = `race-card ${isFuture ? "future" : ""} ${isCancelled ? "cancelled" : ""}`.trim();
     card.setAttribute("aria-label", `Round ${roundNumber}: ${meeting.meeting_name}`);
 
     card.innerHTML = `
@@ -160,6 +198,7 @@ function buildRaceCard(meeting, roundNumber) {
             <span class="card-date">${date}</span>
             <span class="card-country">${meeting.country_name || ""}</span>
         </div>
+        ${isCancelled ? '<div class="card-status cancelled">Cancelled</div>' : isFuture ? '<div class="card-status upcoming">Upcoming</div>' : ""}
         </div>
     `;
 
@@ -174,6 +213,13 @@ function openDrawer(meeting, roundNumber) {
     document.getElementById("drawer-sub").textContent = [meeting.circuit_short_name, meeting.country_name].filter(Boolean).join(" · ");
     document.getElementById("drawer").classList.remove("hidden");
     document.getElementById("drawer-overlay").classList.remove("hidden");
+
+    if (isCancelledMeeting(meeting)) {
+        document.getElementById("drawer-sessions").innerHTML = `
+            <div class="drawer-loading" style="color:#ff8f8f">This race weekend is marked as cancelled.</div>
+        `;
+        return;
+    }
 
     loadDrawerSessions(meeting.meeting_key);
 }
@@ -206,17 +252,32 @@ async function loadDrawerSessions(meetingKey) {
 
         sessions.forEach(session => {
             const row = document.createElement("div");
-            const isFuture = new Date(session.date_start) > new Date();
+            const status = getSessionStatus(session);
+            const isFuture = status === "upcoming";
             const typeClass = getSessionTypeClass(session.session_type);
             row.className = `session-row ${isFuture ? "disabled" : ""}`;
+
+            const statusLabel = status === "upcoming"
+                ? "UPCOMING"
+                : status === "live"
+                    ? "LIVE"
+                    : session.session_type || "—";
+
+            const statusClass = status === "live" ? "live" : isFuture ? "upcoming" : typeClass;
+            const helperText = isFuture
+                ? "Opens when the session starts"
+                : status === "live"
+                    ? "Session currently running"
+                    : "Open lap and standings overview";
 
             row.innerHTML = `
                 <div>
                 <div class="session-name">${session.session_name || session.session_type}</div>
                 <div class="session-date">${formatSessionDate(session.date_start)}</div>
+                <div class="session-help">${helperText}</div>
                 </div>
-                <span class="session-type-badge ${typeClass}">
-                ${isFuture ? "UPCOMING" : session.session_type || "—"}
+                <span class="session-type-badge ${statusClass}">
+                ${statusLabel}
                 </span>
             `;
 

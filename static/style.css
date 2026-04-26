@@ -209,6 +209,16 @@ main {
 }
 .race-card:active { transform: translateY(0); }
 
+.race-card.future {
+  opacity: 0.58;
+  filter: grayscale(0.42);
+}
+
+.race-card.cancelled {
+  border-color: rgba(225, 6, 0, 0.45);
+  background: linear-gradient(180deg, rgba(225, 6, 0, 0.12) 0%, var(--bg2) 48%);
+}
+
 /* Red accent bar on the left */
 .card-accent {
   position: absolute;
@@ -265,6 +275,30 @@ main {
   justify-content: space-between;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+.card-status {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  padding: 3px 8px;
+}
+
+.card-status.upcoming {
+  background: rgba(136, 136, 160, 0.15);
+  border: 1px solid rgba(136, 136, 160, 0.4);
+  color: var(--text2);
+}
+
+.card-status.cancelled {
+  background: rgba(225, 6, 0, 0.18);
+  border: 1px solid rgba(225, 6, 0, 0.5);
+  color: #ff9f9f;
 }
 
 .card-date {
@@ -391,6 +425,12 @@ main {
   color: var(--text);
 }
 
+.session-help {
+  font-size: 11px;
+  color: var(--text3);
+  margin-top: 4px;
+}
+
 .session-type-badge {
   font-size: 9px;
   font-weight: 800;
@@ -405,6 +445,8 @@ main {
 .session-type-badge.race   { background: rgba(225,6,0,0.12); color: var(--red); border-color: rgba(225,6,0,0.3); }
 .session-type-badge.quali  { background: rgba(255,135,0,0.12); color: var(--amber); border-color: rgba(255,135,0,0.3); }
 .session-type-badge.sprint { background: rgba(57,181,74,0.12); color: var(--green); border-color: rgba(57,181,74,0.3); }
+.session-type-badge.live { background: rgba(57,181,74,0.12); color: var(--green); border-color: rgba(57,181,74,0.3); }
+.session-type-badge.upcoming { background: rgba(136,136,160,0.15); color: var(--text2); border-color: rgba(136,136,160,0.35); }
 
 .session-date {
   font-family: var(--mono);
@@ -414,7 +456,8 @@ main {
 }
 
 .session-row.disabled {
-    opacity: 0.4;
+  opacity: 0.45;
+  filter: grayscale(0.55);
     cursor: not-allowed;
     pointer-events: none;
 }
