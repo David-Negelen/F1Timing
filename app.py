@@ -158,5 +158,26 @@ def intervals():
     return jsonify(data)
 
 
+@app.route("/api/location")
+def location():
+    session_key = request.args.get("session_key", type=int)
+    data = openf1_get_cached("/location", {"session_key": session_key}, ttl=15)
+    return jsonify(data)
+
+
+@app.route("/api/stints")
+def stints():
+    session_key = request.args.get("session_key", type=int)
+    data = openf1_get_cached("/stints", {"session_key": session_key}, ttl=45)
+    return jsonify(data)
+
+
+@app.route("/api/race_control")
+def race_control():
+    session_key = request.args.get("session_key", type=int)
+    data = openf1_get_cached("/race_control", {"session_key": session_key}, ttl=20)
+    return jsonify(data)
+
+
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

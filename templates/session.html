@@ -26,16 +26,59 @@
     <div id="status" class="status hidden"></div>
 
     <section id="session-shell" class="session-shell hidden">
+      <section class="session-grid">
+        <article class="tracker-panel">
+          <div class="panel-head">
+            <div>
+              <div class="panel-kicker">Driver Tracker</div>
+              <h1 class="panel-title">Circuit Map</h1>
+              <div class="panel-sub" id="map-sub">Interpolated live position replay</div>
+            </div>
+            <div class="tracker-meta">
+              <span class="meta-chip" id="clock-label">00:00:00</span>
+              <span class="meta-chip" id="lap-label">Lap --</span>
+            </div>
+          </div>
+
+          <div class="track-stage" id="track-stage">
+            <div id="flag-overlay" class="flag-overlay hidden"></div>
+            <svg id="track-map" class="track-map" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid meet"></svg>
+            <aside class="pit-board">
+              <div class="pit-title">Pit Lane</div>
+              <div id="pit-list" class="pit-list">
+                <div class="pit-empty">No drivers in pit lane</div>
+              </div>
+            </aside>
+            <div class="pit-lane-markers">
+              <div class="pit-marker-entry">Pit Entry</div>
+              <div class="pit-marker-exit">Pit Exit</div>
+            </div>
+          </div>
+        </article>
+
+        <article class="tower-panel">
+          <div class="panel-head tower-head">
+            <div>
+              <div class="panel-kicker">Timing</div>
+              <h2 class="panel-title" id="tower-title">Timing Board</h2>
+              <div class="panel-sub" id="tower-sub">Updating by replay clock</div>
+            </div>
+            <div class="tower-status-wrap">
+              <span class="flag-badge" id="flag-badge">GREEN</span>
+            </div>
+          </div>
+          <div class="tower-header" id="tower-header"></div>
+          <div class="tower-body" id="tower-body"></div>
+        </article>
+      </section>
+
       <section class="replay-ribbon" id="replay-ribbon">
         <div class="replay-ribbon-top">
           <div class="replay-title-wrap">
-            <div class="replay-kicker">Replay Control</div>
-            <h1 class="replay-title">Session Timeline</h1>
+            <div class="replay-kicker">Replay</div>
+            <h3 class="replay-title">Timeline</h3>
           </div>
-          <div class="replay-live-meta">
-            <span id="clock-label">00:00:00</span>
-            <span id="lap-label">Lap --</span>
-          </div>
+          <div class="replay-live-meta" id="timeline-meta">00:00 / 00:00</div>
         </div>
 
         <div class="replay-controls-row">
@@ -46,32 +89,17 @@
             <button type="button" data-speed="5" class="speed-btn">5x</button>
             <button type="button" data-speed="10" class="speed-btn">10x</button>
           </div>
-          <div class="timeline-meta" id="timeline-meta">00:00 / 00:00</div>
+          <label class="pit-toggle">
+            <input id="pit-marker-toggle" type="checkbox" checked />
+            Show pit markers
+          </label>
         </div>
 
         <div class="timeline-wrap">
+          <div id="timeline-markers" class="timeline-markers"></div>
           <input id="timeline" type="range" min="0" max="0" value="0" step="1" />
           <div class="timeline-scale" id="timeline-scale"></div>
         </div>
-      </section>
-
-      <section class="session-grid">
-        <article class="tower-panel">
-          <div class="panel-head">
-            <div class="panel-title" id="tower-title">Leaderboard</div>
-            <div class="panel-sub" id="tower-sub">Updating by replay clock</div>
-          </div>
-          <div class="tower-header" id="tower-header"></div>
-          <div class="tower-body" id="tower-body"></div>
-        </article>
-
-        <article class="chart-panel">
-          <div class="panel-head">
-            <div class="panel-title" id="chart-title">Gap Evolution</div>
-            <div class="panel-sub" id="chart-sub">Relative to race leader</div>
-          </div>
-          <svg id="main-chart" class="main-chart" viewBox="0 0 900 420" preserveAspectRatio="none"></svg>
-        </article>
       </section>
     </section>
   </main>
